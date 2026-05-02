@@ -15,10 +15,15 @@ Production
 """
 from __future__ import annotations
 
+import json
 import math
+import uuid
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from core.database import Database
 
 import httpx
 import numpy as np
@@ -88,6 +93,13 @@ class ReporterConfig(BaseModel):
     def from_yaml(cls, path: Path | str) -> "ReporterConfig":
         with open(path) as fh:
             raw = yaml.safe_load(fh)
+        return cls.model_validate(raw)
+
+    @classmethod
+    def from_json(cls, path: Path | str) -> "ReporterConfig":
+        import json
+        with open(path) as fh:
+            raw = json.load(fh)
         return cls.model_validate(raw)
 
 
@@ -327,10 +339,11 @@ class ReporterService:
              "probabilities" is optional — omit to skip ROC-AUC / AP metrics.
     """
 
-    def __init__(self, config: ReporterConfig) -> None:
+    def __init__(self, config: ReporterConfig, db: Database | None = None) -> None:
         self.config = config
         self._loader = DataLoader(config.data)
         self._baseline: ModelEvaluationResult | None = None
+        self._db = db
 
     # ------------------------------------------------------------------
     # Pre-Production — 1: Data Evaluation
@@ -339,23 +352,31 @@ class ReporterService:
     def evaluate_data(self, split: str = "test") -> DataEvaluationResult:
         """Statistical profile of a dataset split (train / test / val)."""
         df = self._loader.load_split(split)
-        feature_cols = _resolve_feature_cols(df, self.config)
-        target = self.config.target_column
+        return self._evaluate_df(df, split)
 
-        vc = df[target].value_counts().sort(target)
-        dist: dict[str, int] = dict(zip(
-            vc[target].cast(pl.String).to_list(),
-            vc["count"].to_list(),
-        ))
-        counts = list(dist.values())
-        imbalance = (
-            round(max(counts) / min(counts), 4)
-            if len(counts) > 1 and min(counts) > 0
-            else 1.0
-        )
+    def _evaluate_df(self, df: pl.DataFrame, split_name: str) -> DataEvaluationResult:
+        """Core statistical profiler — works with or without a target column."""
+        target = self.config.target_column
+        feature_cols = [c for c in df.columns if c != target]
+
+        if target in df.columns:
+            vc = df[target].value_counts().sort(target)
+            dist: dict[str, int] = dict(zip(
+                vc[target].cast(pl.String).to_list(),
+                vc["count"].to_list(),
+            ))
+            counts = list(dist.values())
+            imbalance = (
+                round(max(counts) / min(counts), 4)
+                if len(counts) > 1 and min(counts) > 0
+                else 1.0
+            )
+        else:
+            dist = {}
+            imbalance = 0.0
 
         return DataEvaluationResult(
-            split=split,
+            split=split_name,
             n_rows=df.height,
             n_features=len(feature_cols),
             class_distribution=dist,
@@ -365,14 +386,42 @@ class ReporterService:
             features=[_compute_feature_stats(df[col]) for col in feature_cols],
         )
 
+    def evaluate_all_data(self) -> dict[str, dict[str, Any]]:
+        """
+        Profile every data stage and split in one call.
+
+        Returns a two-key dict:
+          "balanced" → train / test / val (processed balanced splits)
+          "raw"      → unsw_nb15 / ciciot2023 / combined (original CSVs)
+
+        Raw stages can be slow — each source may be hundreds of CSV files.
+        If a raw source is unavailable its entry contains {"error": "<message>"}.
+        """
+        balanced = {split: self.evaluate_data(split) for split in ("train", "test", "val")}
+
+        raw_sources: dict[str, Any] = {
+            "unsw_nb15": self._loader.load_unsw_nb15,
+            "ciciot2023": self._loader.load_ciciot2023,
+            "combined": self._loader.load_raw,
+        }
+        raw: dict[str, Any] = {}
+        for name, load_fn in raw_sources.items():
+            try:
+                raw[name] = self._evaluate_df(load_fn(), name)
+            except Exception as exc:
+                raw[name] = {"error": str(exc)}
+
+        return {"balanced": balanced, "raw": raw}
+
     # ------------------------------------------------------------------
     # Pre-Production — 2: Model Evaluation (via remote API)
     # ------------------------------------------------------------------
 
-    def evaluate_model(self) -> ModelEvaluationResult:
+    def evaluate_model(self, model_version: str | None = None) -> ModelEvaluationResult:
         """
         Send the test set to the remote model API and compute classification metrics.
         Stores the result as the production baseline for later decay tracking.
+        Automatically persists the report to DuckDB if the service was given a db instance.
         """
         df = self._loader.load_test()
         feature_cols = _resolve_feature_cols(df, self.config)
@@ -384,6 +433,10 @@ class ReporterService:
 
         result = self._build_classification_result(y_true, y_pred, y_prob)
         self._baseline = result
+
+        if self._db is not None:
+            self.save_report_to_db(result, report_type="PRE_PROD", model_version=model_version)
+
         return result
 
     # ------------------------------------------------------------------
@@ -511,6 +564,47 @@ class ReporterService:
             overall_status=_status_from_decay(decay_acc, decay_f1, t),
             windows=windows,
         )
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save_report_to_db(
+        self,
+        result: ModelEvaluationResult,
+        *,
+        report_type: str = "PRE_PROD",
+        model_version: str | None = None,
+    ) -> str:
+        """
+        Persist an evaluation result to the reports table.
+        Returns the generated report_id (UUID string).
+        Raises RuntimeError if no Database was provided at construction time.
+        """
+        if self._db is None:
+            raise RuntimeError("No Database instance — pass db= when constructing ReporterService.")
+
+        report_id = str(uuid.uuid4())
+        metrics = json.dumps({
+            "accuracy": result.accuracy,
+            "precision": result.precision,
+            "recall": result.recall,
+            "f1": result.f1,
+            "roc_auc": result.roc_auc,
+            "avg_precision": result.avg_precision,
+        })
+        artifacts = json.dumps({
+            "confusion_matrix": result.confusion_matrix,
+            "roc_curve_fpr": result.roc_curve_fpr,
+            "roc_curve_tpr": result.roc_curve_tpr,
+            "classification_report": result.report,
+        })
+        self._db.execute(
+            "INSERT INTO reports (report_id, report_type, model_version, metrics, artifacts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [report_id, report_type, model_version, metrics, artifacts],
+        )
+        return report_id
 
     # ------------------------------------------------------------------
     # Private

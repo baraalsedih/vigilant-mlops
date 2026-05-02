@@ -1,2 +1,9 @@
 **/artifacts/
 **/CLAUDE.md
+**/data/
+**/__pycache__/
+**/venv/
+**/.env
+**.db
+**.db.wal
+**/notebooks/

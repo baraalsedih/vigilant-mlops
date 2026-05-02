@@ -75,8 +75,39 @@ class DataLoader:
         if self._cache and self._RAW_UNSW in self._store:
             return self._store[self._RAW_UNSW]
 
+        _UNSW_COLS = [
+            "srcip", "sport", "dstip", "dsport", "proto", "state", "dur",
+            "sbytes", "dbytes", "sttl", "dttl", "sloss", "dloss", "service",
+            "sload", "dload", "spkts", "dpkts", "swin", "dwin", "stcpb",
+            "dtcpb", "smeansz", "dmeansz", "trans_depth", "res_bdy_len",
+            "sjit", "djit", "stime", "ltime", "sintpkt", "dintpkt", "tcprtt",
+            "synack", "ackdat", "is_sm_ips_ports", "ct_state_ttl",
+            "ct_flw_http_mthd", "is_ftp_login", "ct_ftp_cmd", "ct_srv_src",
+            "ct_srv_dst", "ct_dst_ltm", "ct_src_ltm", "ct_src_dport_ltm",
+            "ct_dst_sport_ltm", "ct_dst_src_ltm", "attack_cat", "label",
+        ]
+        # sport, dsport, stcpb, dtcpb can contain hex literals (e.g. "0x000c").
+        # Read them as Utf8 then normalise to Int64 after loading.
+        _HEX_COLS = {"sport", "dsport", "stcpb", "dtcpb"}
+        _schema_overrides = {col: pl.Utf8 for col in _HEX_COLS}
+
         part_glob = str(self._paths.raw.unsw_nb15_dir / "UNSW-NB15_[0-9].csv")
-        df = pl.read_csv(part_glob, infer_schema_length=10_000)
+        df = pl.read_csv(
+            part_glob,
+            has_header=False,
+            new_columns=_UNSW_COLS,
+            infer_schema_length=10_000,
+            schema_overrides=_schema_overrides,
+        )
+
+        # Normalise hex/decimal strings → Int64 (nulls stay null)
+        df = df.with_columns(
+            pl.when(pl.col(c).str.starts_with("0x"))
+            .then(pl.col(c).str.slice(2).str.to_integer(base=16, strict=False))
+            .otherwise(pl.col(c).cast(pl.Int64, strict=False))
+            .alias(c)
+            for c in _HEX_COLS
+        )
 
         if self._cache:
             self._store[self._RAW_UNSW] = df
@@ -99,8 +130,13 @@ class DataLoader:
         if self._cache and self._RAW_ALL in self._store:
             return self._store[self._RAW_ALL]
 
+        # Normalise `label` to Utf8 in both sources before stacking —
+        # UNSW-NB15 uses Int64 (0/1) while CICIoT2023 uses String category names.
+        unsw = self.load_unsw_nb15().with_columns(pl.col("label").cast(pl.Utf8))
+        ciciot = self.load_ciciot2023().with_columns(pl.col("label").cast(pl.Utf8))
+
         df = pl.concat(
-            [self.load_unsw_nb15(), self.load_ciciot2023()],
+            [unsw, ciciot],
             how="diagonal",  # fills missing columns with null
         )
 
