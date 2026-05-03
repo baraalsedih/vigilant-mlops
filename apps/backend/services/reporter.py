@@ -162,6 +162,7 @@ class FeatureDriftResult(BaseModel):
 
 
 class DataDriftResult(BaseModel):
+    n_accumulated: int
     n_features_checked: int
     n_drifted: int
     drift_rate: float
@@ -265,19 +266,26 @@ def _compute_feature_stats(series: pl.Series) -> FeatureStats:
 
 
 def _psi_numeric(ref: pl.Series, prod: pl.Series, n_bins: int) -> float:
-    """PSI for continuous features using reference quantile bins."""
+    """PSI for continuous features using reference quantile bins.
+
+    Uses adaptive binning: enforces at least 5 production records per bin so
+    PSI doesn't explode when the production window is small. Full n_bins is
+    restored once the window is large enough.
+    """
     ref_arr = ref.drop_nulls().to_numpy()
     prod_arr = prod.drop_nulls().to_numpy()
 
-    breakpoints = np.quantile(ref_arr, np.linspace(0, 1, n_bins + 1))
+    effective_bins = min(n_bins, max(2, len(prod_arr) // 5))
+
+    breakpoints = np.quantile(ref_arr, np.linspace(0, 1, effective_bins + 1))
     breakpoints[0] = -np.inf
     breakpoints[-1] = np.inf
 
     ref_counts, _ = np.histogram(ref_arr, bins=breakpoints)
     prod_counts, _ = np.histogram(prod_arr, bins=breakpoints)
 
-    ref_pct = (ref_counts + _EPSILON) / (len(ref_arr) + _EPSILON * n_bins)
-    prod_pct = (prod_counts + _EPSILON) / (len(prod_arr) + _EPSILON * n_bins)
+    ref_pct = (ref_counts + _EPSILON) / (len(ref_arr) + _EPSILON * effective_bins)
+    prod_pct = (prod_counts + _EPSILON) / (len(prod_arr) + _EPSILON * effective_bins)
 
     return round(float(np.sum((prod_pct - ref_pct) * np.log(prod_pct / ref_pct))), 6)
 
@@ -445,17 +453,43 @@ class ReporterService:
 
     def evaluate_data_drift(self, production_df: pl.DataFrame) -> DataDriftResult:
         """
-        Compare an incoming production batch against the reference split.
+        Compare production data against the training reference distribution.
         Numeric     → PSI + two-sample KS test.
         Categorical → PSI + Chi² contingency test.
         The stricter of the two signals determines per-feature status.
+
+        When a Database is attached, incoming records are persisted to
+        production_log and PSI is computed on the full accumulated window,
+        not just the current batch.
         """
+        if self._db is not None:
+            self._append_production_records(production_df)
+            production_df = self._load_production_records()
+
         reference_df = self._loader.load_reference()
         feature_cols = [
             col for col in _resolve_feature_cols(reference_df, self.config)
             if col in production_df.columns
         ]
+
+        # Align production column dtypes to the reference so comparisons don't
+        # blow up when JSON inference picks Float64 for a column that is Utf8 in
+        # the parquet (e.g. proto sent as 6.0 but stored as "tcp").
+        cast_exprs = [
+            pl.col(col).cast(reference_df[col].dtype, strict=False)
+            for col in feature_cols
+            if production_df[col].dtype != reference_df[col].dtype
+        ]
+        if cast_exprs:
+            production_df = production_df.with_columns(cast_exprs)
+
         t = self.config.thresholds
+        # PSI requires a large enough window to be reliable. Below this threshold
+        # PSI scores are still reported but capped at WARNING so small-batch noise
+        # doesn't fire false CRITICAL alerts; KS / Chi² remain the authoritative
+        # signal for small windows.
+        _MIN_PSI_SAMPLES = 50
+        psi_reliable = production_df.height >= _MIN_PSI_SAMPLES
         feature_results: list[FeatureDriftResult] = []
 
         for col in feature_cols:
@@ -465,8 +499,11 @@ class ReporterService:
             if is_cat:
                 psi = _psi_categorical(ref_s, prod_s)
                 _, pvalue = _chi2_test(ref_s, prod_s)
+                psi_status = _status_from_psi(psi, t)
+                if not psi_reliable and psi_status == DriftStatus.CRITICAL:
+                    psi_status = DriftStatus.WARNING
                 status = _max_status(
-                    _status_from_psi(psi, t),
+                    psi_status,
                     _status_from_pvalue(pvalue, t.chi2_pvalue_threshold),
                 )
                 feature_results.append(FeatureDriftResult(
@@ -476,8 +513,11 @@ class ReporterService:
             else:
                 psi = _psi_numeric(ref_s, prod_s, self.config.psi_bins)
                 _, pvalue = _ks_test(ref_s, prod_s)
+                psi_status = _status_from_psi(psi, t)
+                if not psi_reliable and psi_status == DriftStatus.CRITICAL:
+                    psi_status = DriftStatus.WARNING
                 status = _max_status(
-                    _status_from_psi(psi, t),
+                    psi_status,
                     _status_from_pvalue(pvalue, t.ks_pvalue_threshold),
                 )
                 feature_results.append(FeatureDriftResult(
@@ -494,6 +534,7 @@ class ReporterService:
         )
 
         return DataDriftResult(
+            n_accumulated=production_df.height,
             n_features_checked=len(feature_results),
             n_drifted=len(drifted),
             drift_rate=drift_rate,
@@ -610,6 +651,30 @@ class ReporterService:
     # Private
     # ------------------------------------------------------------------
 
+    def _append_production_records(self, df: pl.DataFrame) -> None:
+        """Persist each row of a production batch to the DuckDB production_log."""
+        for row in df.to_dicts():
+            self._db.execute(
+                "INSERT INTO production_log (log_id, features) VALUES (?, ?)",
+                [str(uuid.uuid4()), json.dumps(row)],
+            )
+
+    def _load_production_records(self) -> pl.DataFrame:
+        """Load all accumulated production records from DuckDB as a Polars DataFrame."""
+        rows = self._db.fetchall(
+            "SELECT features FROM production_log ORDER BY received_at"
+        )
+        if not rows:
+            return pl.DataFrame()
+        return pl.from_dicts([json.loads(r["features"]) for r in rows])
+
+    def reset_production_log(self) -> int:
+        """Delete all accumulated production records. Returns the row count deleted."""
+        count_row = self._db.fetchone("SELECT COUNT(*) AS n FROM production_log")
+        n = int(count_row["n"]) if count_row else 0
+        self._db.execute("DELETE FROM production_log")
+        return n
+
     def _call_predict(self, instances: list[dict[str, Any]]) -> dict[str, Any]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.config.model_api.api_key:
@@ -621,7 +686,12 @@ class ReporterService:
                 json={"instances": instances},
                 headers=headers,
             )
-        response.raise_for_status()
+        if not response.is_success:
+            raise httpx.HTTPStatusError(
+                f"HTTP {response.status_code}: {response.text}",
+                request=response.request,
+                response=response,
+            )
         return response.json()
 
     def _build_classification_result(
