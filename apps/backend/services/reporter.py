@@ -43,7 +43,11 @@ from sklearn.metrics import (
     roc_curve,
 )
 
+from core.logger import get_logger
+from .alerting_engine import AlertManager
 from .data_loader import DataLoader, DataPaths
+
+_logger = get_logger("vigilant.reporter")
 
 
 # ===========================================================================
@@ -57,6 +61,7 @@ class ModelAPIConfig(BaseModel):
     health_endpoint: str = "/health"
     timeout_seconds: int = 30
     api_key: str | None = None
+    model_version: str | None = None
 
     @property
     def predict_url(self) -> str:
@@ -347,11 +352,17 @@ class ReporterService:
              "probabilities" is optional — omit to skip ROC-AUC / AP metrics.
     """
 
-    def __init__(self, config: ReporterConfig, db: Database | None = None) -> None:
+    def __init__(
+        self,
+        config: ReporterConfig,
+        db: Database | None = None,
+        alert_manager: AlertManager | None = None,
+    ) -> None:
         self.config = config
         self._loader = DataLoader(config.data)
         self._baseline: ModelEvaluationResult | None = None
         self._db = db
+        self._alert_manager = alert_manager
 
     # ------------------------------------------------------------------
     # Pre-Production — 1: Data Evaluation
@@ -451,7 +462,11 @@ class ReporterService:
     # Production — 1: Ongoing Data Evaluation (drift)
     # ------------------------------------------------------------------
 
-    def evaluate_data_drift(self, production_df: pl.DataFrame) -> DataDriftResult:
+    def evaluate_data_drift(
+        self,
+        production_df: pl.DataFrame,
+        model_version: str | None = None,
+    ) -> DataDriftResult:
         """
         Compare production data against the training reference distribution.
         Numeric     → PSI + two-sample KS test.
@@ -462,6 +477,8 @@ class ReporterService:
         production_log and PSI is computed on the full accumulated window,
         not just the current batch.
         """
+        model_version = model_version or self.config.model_api.model_version
+
         if self._db is not None:
             self._append_production_records(production_df)
             production_df = self._load_production_records()
@@ -506,10 +523,10 @@ class ReporterService:
                     psi_status,
                     _status_from_pvalue(pvalue, t.chi2_pvalue_threshold),
                 )
-                feature_results.append(FeatureDriftResult(
+                feat_result = FeatureDriftResult(
                     feature=col, method="psi+chi2",
                     statistic=psi, pvalue=pvalue, status=status,
-                ))
+                )
             else:
                 psi = _psi_numeric(ref_s, prod_s, self.config.psi_bins)
                 _, pvalue = _ks_test(ref_s, prod_s)
@@ -520,10 +537,33 @@ class ReporterService:
                     psi_status,
                     _status_from_pvalue(pvalue, t.ks_pvalue_threshold),
                 )
-                feature_results.append(FeatureDriftResult(
+                feat_result = FeatureDriftResult(
                     feature=col, method="psi+ks",
                     statistic=psi, pvalue=pvalue, status=status,
-                ))
+                )
+
+            _logger.info(
+                "Drift check | feature={} | psi={:.6f} | pvalue={} | status={}",
+                col,
+                psi,
+                f"{pvalue:.6f}" if pvalue is not None else "N/A",
+                status.value,
+            )
+
+            if self._alert_manager is not None and status != DriftStatus.OK:
+                self._alert_manager.trigger_alert(
+                    severity="CRITICAL" if status == DriftStatus.CRITICAL else "WARNING",
+                    event_type="DRIFT",
+                    description=f"Feature '{col}' drift detected (PSI={psi:.4f})",
+                    metadata={
+                        "feature": col,
+                        "psi": psi,
+                        "pvalue": pvalue,
+                        "model_version": model_version,
+                    },
+                )
+
+            feature_results.append(feat_result)
 
         drifted = [r for r in feature_results if r.status != DriftStatus.OK]
         drift_rate = round(len(drifted) / len(feature_results), 4) if feature_results else 0.0
