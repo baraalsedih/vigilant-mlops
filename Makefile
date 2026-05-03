@@ -1,4 +1,4 @@
-.PHONY: help dev-backend db-reset seed
+.PHONY: help dev-backend db-reset seed test
 
 -include .env
 export
@@ -14,3 +14,6 @@ seed: ## Seed the DB: evaluate-data → evaluate-model → evaluate-drift (×3 b
 
 db-reset: ## Drop all data and re-apply schema (preserves table structure)
 	cd apps/backend && poetry run python ../../scripts/db_reset.py
+
+test: ## Run backend unit and integration tests
+	cd apps/backend && poetry install --with dev --quiet && poetry run pytest
