@@ -19,7 +19,7 @@ logger = get_logger("vigilant.app")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("VigilantMLOps API starting up…")
+    logger.info("VigilantMLOps Backend is starting up...")
     db.startup()
     yield
     db.shutdown()
