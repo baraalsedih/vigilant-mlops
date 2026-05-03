@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS incidents (
     description   TEXT,
     status        VARCHAR NOT NULL DEFAULT 'TRIGGERED'
 );
+
+CREATE TABLE IF NOT EXISTS production_log (
+    log_id      VARCHAR PRIMARY KEY,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    features    JSON NOT NULL
+);

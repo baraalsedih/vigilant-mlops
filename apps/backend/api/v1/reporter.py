@@ -132,6 +132,26 @@ def run_evaluate_drift(
 
 
 # ---------------------------------------------------------------------------
+# Production — Reset accumulated drift window
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/reporter/production-log")
+def reset_production_log():
+    """
+    Delete all accumulated production records from the drift window.
+    Use this to start a fresh evaluation period (e.g. after a model retrain).
+    Returns the number of rows deleted.
+    """
+    reporter = _get_reporter()
+    try:
+        n_deleted = reporter.reset_production_log()
+        return {"deleted_records": n_deleted}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Utility — Model API health check
 # ---------------------------------------------------------------------------
 
