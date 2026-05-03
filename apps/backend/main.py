@@ -11,14 +11,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.database import db
+from core.logger import get_logger
 from api.v1 import incidents, monitoring, reporter, telemetry
+
+logger = get_logger("vigilant.app")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("VigilantMLOps API starting up…")
     db.startup()
     yield
     db.shutdown()
+    logger.info("VigilantMLOps API shut down.")
 
 
 app = FastAPI(
