@@ -95,6 +95,19 @@ MIGRATIONS: list[Migration] = [
             """,
         ),
     ),
+    Migration(
+        version=2,
+        description="Add feature_stats table for drift baseline statistics",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS feature_stats (
+                feature_name VARCHAR PRIMARY KEY,
+                stats_json   JSON NOT NULL,
+                updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """,
+        ),
+    ),
 ]
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -106,6 +119,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
+
+
+_SEED_SQL = Path(__file__).parent / "database" / "seed_data.sql"
 
 
 def _connect(db_path: Path) -> duckdb.DuckDBPyConnection:
@@ -126,10 +142,30 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
     return row[0] if row else 0
 
 
+def _apply_seed(conn: duckdb.DuckDBPyConnection) -> None:
+    """Load seed_data.sql into feature_stats when the table is empty."""
+    if not _SEED_SQL.exists():
+        return
+
+    count = conn.execute("SELECT COUNT(*) FROM feature_stats").fetchone()[0]
+    if count > 0:
+        print(f"  feature_stats already has {count} rows — skipping seed.")
+        return
+
+    inserted = 0
+    for line in _SEED_SQL.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("--"):
+            conn.execute(line)
+            inserted += 1
+
+    print(f"  Seeded {inserted} baseline rows into feature_stats from {_SEED_SQL.name}.")
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def init(db_path: Path) -> None:
-    """Apply all pending migrations in ascending version order."""
+    """Apply all pending migrations in ascending version order, then seed if fresh."""
     conn = _connect(db_path)
     try:
         current = _current_version(conn)
@@ -137,20 +173,21 @@ def init(db_path: Path) -> None:
 
         if not pending:
             print(f"Database is up to date (version {current}).")
-            return
+        else:
+            for migration in pending:
+                print(f"Applying v{migration.version}: {migration.description}")
+                for stmt in migration.statements:
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                    [migration.version, migration.description],
+                )
+                print(f"  v{migration.version} applied.")
 
-        for migration in pending:
-            print(f"Applying v{migration.version}: {migration.description}")
-            for stmt in migration.statements:
-                conn.execute(stmt)
-            conn.execute(
-                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-                [migration.version, migration.description],
-            )
-            print(f"  v{migration.version} applied.")
+            final = _current_version(conn)
+            print(f"Database ready at version {final}.")
 
-        final = _current_version(conn)
-        print(f"Database ready at version {final}.")
+        _apply_seed(conn)
     finally:
         conn.close()
 
