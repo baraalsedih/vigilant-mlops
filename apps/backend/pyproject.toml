@@ -33,6 +33,11 @@ pytest-asyncio = ">=0.23.0"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-v --tb=short --durations=5"
+log_cli = true
+log_cli_level = "WARNING"
+log_cli_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+log_cli_date_format = "%H:%M:%S"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
