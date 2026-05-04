@@ -144,13 +144,17 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 
 def _apply_seed(conn: duckdb.DuckDBPyConnection) -> None:
-    """Load seed_data.sql into feature_stats when the table is empty."""
+    """Load seed_data.sql when either feature_stats or reports is empty.
+
+    All statements use INSERT OR REPLACE so re-running is safe.
+    """
     if not _SEED_SQL.exists():
         return
 
-    count = conn.execute("SELECT COUNT(*) FROM feature_stats").fetchone()[0]
-    if count > 0:
-        print(f"  feature_stats already has {count} rows — skipping seed.")
+    n_stats = conn.execute("SELECT COUNT(*) FROM feature_stats").fetchone()[0]
+    n_reports = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+    if n_stats > 0 and n_reports > 0:
+        print(f"  feature_stats ({n_stats}) and reports ({n_reports}) already populated — skipping seed.")
         return
 
     inserted = 0
@@ -160,7 +164,7 @@ def _apply_seed(conn: duckdb.DuckDBPyConnection) -> None:
             conn.execute(line)
             inserted += 1
 
-    print(f"  Seeded {inserted} baseline rows into feature_stats from {_SEED_SQL.name}.")
+    print(f"  Seeded {inserted} statements from {_SEED_SQL.name}.")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
