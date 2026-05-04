@@ -19,8 +19,8 @@ import duckdb
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 
-# Absolute path derived from this file's location so it is cwd-independent.
-_DEFAULT_DB = Path(__file__).parent / "database" / "vigilant.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_DB = Path(os.path.join(BASE_DIR, "database", "vigilant.db"))
 
 
 def _resolve_db_path() -> Path:
@@ -121,7 +121,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-_SEED_SQL = Path(__file__).parent / "database" / "seed_data.sql"
+SEED_PATH = os.path.join(BASE_DIR, "database", "seed_data.sql")
+_SEED_SQL = Path(SEED_PATH)
 
 
 def _connect(db_path: Path) -> duckdb.DuckDBPyConnection:
