@@ -10,7 +10,7 @@ VigilantMLOps gives ML teams a real-time observability layer over binary classif
 
 ```mermaid
 flowchart TD
-    DS[("Public Dataset\nNIDS / Malicious URL")]
+    DS[("Public Dataset\n / Malicious Websites")]
 
     subgraph API["API Layer  ·  FastAPI"]
         direction TB
@@ -42,7 +42,7 @@ flowchart TD
         EVALS[("evaluation_reports")]
     end
 
-    DS -->|"Polars ETL"| INGEST
+    DS -->|"ETL"| INGEST
 
     GATE -->|"Valid Payload"| DRIFT
     GATE -->|"Valid Payload"| PERF
@@ -145,10 +145,8 @@ vigilant-mlops/
 │   │   ├── services/     # Business logic (drift_detector, performance_service, alerting_engine …)
 │   │   ├── core/         # DB manager, migrations, procedures config
 │   │   └── main.py
-│   ├── ml-serve/         # Scikit-learn inference service
 │   └── ui/               # React + Vite + Tailwind frontend
 ├── artifacts/            # Trained model artifacts
-├── notebooks/            # Exploratory analysis
 ├── scripts/              # Seed & utility scripts
 └── docker-compose.yml
 ```
