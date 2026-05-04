@@ -183,6 +183,28 @@ def reset_production_log():
 
 
 # ---------------------------------------------------------------------------
+# Utility — Export baseline feature stats (used by seed script)
+# ---------------------------------------------------------------------------
+
+
+class FeatureStatsRow(BaseModel):
+    feature_name: str
+    stats_json: str
+
+
+@router.get("/reporter/feature-stats", response_model=list[FeatureStatsRow])
+def get_feature_stats():
+    """Return all rows from feature_stats ordered by feature name."""
+    try:
+        rows = db.fetchall(
+            "SELECT feature_name, stats_json FROM feature_stats ORDER BY feature_name"
+        )
+        return rows
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Utility — Model API health check
 # ---------------------------------------------------------------------------
 

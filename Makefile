@@ -1,4 +1,4 @@
-.PHONY: help dev-backend db-init db-reset db-status seed init-baseline test
+.PHONY: help dev-backend db-init db-reset db-status seed migration init-baseline test
 
 -include .env
 export
@@ -10,7 +10,10 @@ dev-backend: ## Start the FastAPI backend with hot reload
 	cd apps/backend && poetry run uvicorn main:app --reload
 
 seed: ## Seed the DB: evaluate-data → evaluate-model → evaluate-drift (×3 batches). Use ARGS="--skip <stage>" to skip stages
-	python3 scripts/seed.py $(ARGS)
+	cd apps/backend && poetry run python ../../scripts/seed.py $(ARGS)
+
+migration: ## Create a new migration. Usage: make migration NAME=add_new_table
+	cd apps/backend && poetry run python ../../scripts/migration.py $(NAME)
 
 db-init: ## Apply any pending migrations (idempotent)
 	cd apps/backend && poetry run python -m core.db_manager init

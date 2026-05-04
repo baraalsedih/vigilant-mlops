@@ -416,7 +416,12 @@ class ReporterService:
         Raw stages can be slow — each source may be hundreds of CSV files.
         If a raw source is unavailable its entry contains {"error": "<message>"}.
         """
-        balanced = {split: self.evaluate_data(split) for split in ("train", "test", "val")}
+        balanced: dict[str, DataEvaluationResult] = {
+            split: self.evaluate_data(split) for split in ("train", "test", "val")
+        }
+        if self._db is not None:
+            for result in balanced.values():
+                self._save_data_eval_to_db(result, stage="balanced")
 
         raw_sources: dict[str, Any] = {
             "unsw_nb15": self._loader.load_unsw_nb15,
@@ -426,7 +431,10 @@ class ReporterService:
         raw: dict[str, Any] = {}
         for name, load_fn in raw_sources.items():
             try:
-                raw[name] = self._evaluate_df(load_fn(), name)
+                result = self._evaluate_df(load_fn(), name)
+                raw[name] = result
+                if self._db is not None:
+                    self._save_data_eval_to_db(result, stage="raw")
             except Exception as exc:
                 raw[name] = {"error": str(exc)}
 
@@ -470,6 +478,7 @@ class ReporterService:
         self._baseline = result
 
         if self._db is not None:
+            model_version = model_version or self.config.model_api.model_version
             self.save_report_to_db(result, report_type="PRE_PROD", model_version=model_version)
 
         return result
@@ -669,6 +678,29 @@ class ReporterService:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+
+    def _save_data_eval_to_db(self, result: DataEvaluationResult, *, stage: str) -> str:
+        """Persist a DataEvaluationResult to the reports table as report_type='DATA_EVAL'."""
+        report_id = str(uuid.uuid4())
+        metrics = json.dumps({
+            "split": result.split,
+            "stage": stage,
+            "n_rows": result.n_rows,
+            "n_features": result.n_features,
+            "class_distribution": result.class_distribution,
+            "imbalance_ratio": result.imbalance_ratio,
+            "duplicate_rows": result.duplicate_rows,
+            "missing_cells": result.missing_cells,
+        })
+        artifacts = json.dumps({
+            "features": [f.model_dump() for f in result.features],
+        })
+        self._db.execute(
+            "INSERT INTO reports (report_id, report_type, model_version, metrics, artifacts) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [report_id, "DATA_EVAL", f"{stage}/{result.split}", metrics, artifacts],
+        )
+        return report_id
 
     def save_report_to_db(
         self,
