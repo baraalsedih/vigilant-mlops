@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -24,6 +25,11 @@ _logger = get_logger("vigilant.middleware")
 _alert_manager = AlertManager(db=db)
 
 _LATENCY_WARNING_MS = 500.0
+
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
 
 
 class SystemHealthMiddleware(BaseHTTPMiddleware):
@@ -75,8 +81,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="VigilantMLOps",
-    description="Production-grade MLOps monitoring and observability platform.",
+    title="VigilantMLOps API",
+    description=(
+        "Production-grade MLOps monitoring and observability platform for binary classification models. "
+        "Provides endpoints for pre-production model evaluation, real-time data drift detection (PSI/KS/Chi²), "
+        "incident management, and system health monitoring."
+    ),
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -90,12 +100,12 @@ app.add_middleware(
 )
 
 
-@app.get("/health", tags=["health"])
+@app.get("/health", tags=["System"], response_model=HealthResponse)
 def health_check():
     return {"status": "healthy", "service": "vigilant-api"}
 
 
-app.include_router(monitoring.router, prefix="/api/v1", tags=["monitoring"])
-app.include_router(incidents.router, prefix="/api/v1", tags=["incidents"])
-app.include_router(reporter.router, prefix="/api/v1", tags=["reporter"])
-app.include_router(telemetry.router, prefix="/api/v1", tags=["telemetry"])
+app.include_router(monitoring.router, prefix="/api/v1", tags=["Monitoring"])
+app.include_router(incidents.router, prefix="/api/v1", tags=["Monitoring"])
+app.include_router(reporter.router, prefix="/api/v1", tags=["Data"])
+app.include_router(telemetry.router, prefix="/api/v1", tags=["System"])

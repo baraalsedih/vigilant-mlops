@@ -10,7 +10,23 @@ from pydantic import BaseModel
 
 from core.database import db
 from services.alerting_engine import AlertManager
-from services.reporter import ReporterConfig, ReporterService
+from services.reporter import (
+    DataDriftResult,
+    ModelEvaluationResult,
+    ReporterConfig,
+    ReporterService,
+)
+
+
+class DeletedRecordsResponse(BaseModel):
+    deleted_records: int
+
+
+class ModelHealthResponse(BaseModel):
+    model_api: str
+    url: str
+    status_code: int | None = None
+    error: str | None = None
 
 router = APIRouter()
 
@@ -36,7 +52,7 @@ def _get_reporter() -> ReporterService:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reporter/evaluate-data")
+@router.post("/reporter/evaluate-data", response_model=dict[str, Any])
 def run_evaluate_data():
     """
     Profile every data stage and split in one request.
@@ -66,7 +82,7 @@ def run_evaluate_data():
 # ---------------------------------------------------------------------------
 
 
-@router.post("/reporter/evaluate-model")
+@router.post("/reporter/evaluate-model", response_model=ModelEvaluationResult)
 def run_evaluate_model(
     model_version: str | None = Query(None, description="Optional version tag stored with the report"),
 ):
@@ -96,7 +112,7 @@ class DriftRequest(BaseModel):
     records: list[dict[str, Any]]
 
 
-@router.post("/reporter/evaluate-drift")
+@router.post("/reporter/evaluate-drift", response_model=DataDriftResult)
 def run_evaluate_drift(
     split: str | None = Query(
         None,
@@ -138,7 +154,7 @@ def run_evaluate_drift(
 # ---------------------------------------------------------------------------
 
 
-@router.delete("/reporter/production-log")
+@router.delete("/reporter/production-log", response_model=DeletedRecordsResponse)
 def reset_production_log():
     """
     Delete all accumulated production records from the drift window.
@@ -158,7 +174,7 @@ def reset_production_log():
 # ---------------------------------------------------------------------------
 
 
-@router.get("/reporter/model-health")
+@router.get("/reporter/model-health", response_model=ModelHealthResponse)
 def check_model_api_health():
     """Ping the configured model API health endpoint."""
     reporter = _get_reporter()
