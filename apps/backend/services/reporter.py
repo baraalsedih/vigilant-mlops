@@ -436,13 +436,29 @@ class ReporterService:
     # Pre-Production — 2: Model Evaluation (via remote API)
     # ------------------------------------------------------------------
 
-    def evaluate_model(self, model_version: str | None = None) -> ModelEvaluationResult:
+    def evaluate_model(
+        self,
+        df: pl.DataFrame | None = None,
+        model_version: str | None = None,
+    ) -> ModelEvaluationResult:
         """
         Send the test set to the remote model API and compute classification metrics.
         Stores the result as the production baseline for later decay tracking.
         Automatically persists the report to DuckDB if the service was given a db instance.
+
+        df: optional labeled DataFrame (features + target column). When omitted the
+            service tries to load the test parquet from disk; if unavailable it falls
+            back to the latest PRE_PROD report stored in DuckDB.
         """
-        df = self._loader.load_test()
+        if df is None:
+            try:
+                df = self._loader.load_test()
+            except Exception:
+                if self._db is not None:
+                    result = self._load_latest_model_report()
+                    self._baseline = result
+                    return result
+                raise
         feature_cols = _resolve_feature_cols(df, self.config)
         y_true: list[int] = df[self.config.target_column].to_list()
 
@@ -468,20 +484,24 @@ class ReporterService:
         model_version: str | None = None,
     ) -> DataDriftResult:
         """
-        Compare production data against the training reference distribution.
-        Numeric     → PSI + two-sample KS test.
-        Categorical → PSI + Chi² contingency test.
-        The stricter of the two signals determines per-feature status.
+        Compare production data against the reference distribution.
 
-        When a Database is attached, incoming records are persisted to
-        production_log and PSI is computed on the full accumulated window,
-        not just the current batch.
+        When a Database is attached: persists the batch to production_log,
+        then computes PSI against baselines stored in the feature_stats table
+        (populated by scripts/init_baseline.py). No reference parquet needed.
+
+        When no Database is attached (e.g. unit tests): falls back to loading
+        the reference parquet via DataLoader and running PSI + KS / Chi².
         """
         model_version = model_version or self.config.model_api.model_version
 
         if self._db is not None:
             self._append_production_records(production_df)
             production_df = self._load_production_records()
+            from services.drift_detector import DriftDetector as _DriftDetector
+            detector = _DriftDetector(db=self._db, alert_manager=self._alert_manager)
+            check = detector.check_drift(production_df)
+            return self._map_detector_result(check, n_accumulated=production_df.height)
 
         reference_df = self._loader.load_reference()
         feature_cols = [
@@ -691,6 +711,33 @@ class ReporterService:
     # Private
     # ------------------------------------------------------------------
 
+    def _map_detector_result(self, check, n_accumulated: int) -> DataDriftResult:
+        """Convert a DriftCheckResult (DriftDetector) into DataDriftResult."""
+        _s = {
+            "OK": DriftStatus.OK,
+            "WARNING": DriftStatus.WARNING,
+            "CRITICAL": DriftStatus.CRITICAL,
+        }
+        n_checked = len(check.feature_results)
+        n_drifted = len(check.drifted_features)
+        return DataDriftResult(
+            n_accumulated=n_accumulated,
+            n_features_checked=n_checked,
+            n_drifted=n_drifted,
+            drift_rate=round(n_drifted / n_checked, 4) if n_checked > 0 else 0.0,
+            overall_status=_s.get(check.status, DriftStatus.OK),
+            features=[
+                FeatureDriftResult(
+                    feature=r.feature_name,
+                    method="psi",
+                    statistic=r.psi,
+                    pvalue=None,
+                    status=_s.get(r.status, DriftStatus.OK),
+                )
+                for r in check.feature_results
+            ],
+        )
+
     def _append_production_records(self, df: pl.DataFrame) -> None:
         """Persist each row of a production batch to the DuckDB production_log."""
         for row in df.to_dicts():
@@ -714,6 +761,27 @@ class ReporterService:
         n = int(count_row["n"]) if count_row else 0
         self._db.execute("DELETE FROM production_log")
         return n
+
+    def _load_latest_model_report(self) -> ModelEvaluationResult:
+        """Return the most-recent PRE_PROD report from DuckDB, or raise ValueError."""
+        row = self._db.fetchone(
+            "SELECT metrics, artifacts FROM reports "
+            "WHERE report_type = 'PRE_PROD' ORDER BY timestamp DESC LIMIT 1"
+        )
+        if row is None:
+            raise ValueError(
+                "No test parquet on disk and no stored evaluation found in the database. "
+                "POST labeled test records in the request body to run a fresh evaluation."
+            )
+        metrics = json.loads(row["metrics"]) if isinstance(row["metrics"], str) else row["metrics"]
+        artifacts = json.loads(row["artifacts"]) if isinstance(row["artifacts"], str) else row["artifacts"]
+        return ModelEvaluationResult(
+            **metrics,
+            confusion_matrix=artifacts["confusion_matrix"],
+            roc_curve_fpr=artifacts.get("roc_curve_fpr", []),
+            roc_curve_tpr=artifacts.get("roc_curve_tpr", []),
+            report=artifacts["classification_report"],
+        )
 
     def _call_predict(self, instances: list[dict[str, Any]]) -> dict[str, Any]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
