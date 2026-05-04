@@ -11,7 +11,8 @@
     "base_url": "http://localhost:8001",
     "predict_endpoint": "/predict",
     "health_endpoint": "/health",
-    "timeout_seconds": 300
+    "timeout_seconds": 300,
+    "model_version": "1.0.0"
   },
   "target_column": "target",
   "categorical_columns": ["proto", "state", "source"],

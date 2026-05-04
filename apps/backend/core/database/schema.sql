@@ -21,3 +21,11 @@ CREATE TABLE IF NOT EXISTS production_log (
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     features    JSON NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id  VARCHAR PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    level     VARCHAR NOT NULL,
+    message   TEXT NOT NULL,
+    metadata  JSON
+);

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from core.database import db
+from services.alerting_engine import AlertManager
 from services.reporter import ReporterConfig, ReporterService
 
 router = APIRouter()
@@ -26,7 +27,7 @@ def _get_reporter() -> ReporterService:
                 detail=f"Reporter config not found at {_CONFIG_PATH}",
             )
         config = ReporterConfig.from_json(_CONFIG_PATH)
-        _reporter = ReporterService(config, db=db)
+        _reporter = ReporterService(config, db=db, alert_manager=AlertManager(db=db))
     return _reporter
 
 
@@ -102,6 +103,7 @@ def run_evaluate_drift(
         description="Use an existing split as stand-in production data (train/test/val). "
                     "Omit to POST records in the request body instead.",
     ),
+    model_version: str | None = Query(None, description="Model version tag included in drift alert metadata."),
     body: DriftRequest | None = None,
 ):
     """
@@ -126,7 +128,7 @@ def run_evaluate_drift(
         )
 
     try:
-        return reporter.evaluate_data_drift(production_df)
+        return reporter.evaluate_data_drift(production_df, model_version=model_version)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
