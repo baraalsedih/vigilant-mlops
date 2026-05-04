@@ -29,3 +29,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     message   TEXT NOT NULL,
     metadata  JSON
 );
+
+CREATE TABLE IF NOT EXISTS feature_stats (
+    feature_name VARCHAR PRIMARY KEY,
+    stats_json   JSON NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

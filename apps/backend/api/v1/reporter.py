@@ -82,18 +82,31 @@ def run_evaluate_data():
 # ---------------------------------------------------------------------------
 
 
+class ModelEvalRequest(BaseModel):
+    records: list[dict[str, Any]] | None = None
+
+
 @router.post("/reporter/evaluate-model", response_model=ModelEvaluationResult)
 def run_evaluate_model(
     model_version: str | None = Query(None, description="Optional version tag stored with the report"),
+    body: ModelEvalRequest | None = None,
 ):
     """
     Send the test split to the remote model API and compute classification metrics.
     Saves the result as the baseline for drift/decay tracking and persists to DB.
-    Requires the model API at model_api.base_url to be running.
+
+    When called without a body: loads test_nodup_hybrid.parquet from disk (falls back
+    to the latest stored PRE_PROD report if the parquet is unavailable).
+    When called with { "records": [{...}, ...] }: uses those labeled records directly —
+    each record must include the target column (label).
     """
     reporter = _get_reporter()
+    df = None
+    if body and body.records:
+        from services.data_loader import DataLoader
+        df = DataLoader.from_records(body.records)
     try:
-        return reporter.evaluate_model(model_version)
+        return reporter.evaluate_model(df=df, model_version=model_version)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
