@@ -1,4 +1,4 @@
-.PHONY: help dev-backend db-reset seed test
+.PHONY: help dev-backend db-init db-reset db-status seed test
 
 -include .env
 export
@@ -12,8 +12,14 @@ dev-backend: ## Start the FastAPI backend with hot reload
 seed: ## Seed the DB: evaluate-data → evaluate-model → evaluate-drift (×3 batches). Use ARGS="--skip <stage>" to skip stages
 	python3 scripts/seed.py $(ARGS)
 
-db-reset: ## Drop all data and re-apply schema (preserves table structure)
-	cd apps/backend && poetry run python ../../scripts/db_reset.py
+db-init: ## Apply any pending migrations (idempotent)
+	cd apps/backend && poetry run python -m core.db_manager init
+
+db-reset: ## Drop all tables and re-apply all migrations from scratch
+	cd apps/backend && poetry run python -m core.db_manager reset
+
+db-status: ## Show applied migration history and pending versions
+	cd apps/backend && poetry run python -m core.db_manager status
 
 test: ## Run backend unit and integration tests
 	cd apps/backend && poetry install --with dev --quiet && poetry run pytest
