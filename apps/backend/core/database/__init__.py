@@ -6,8 +6,11 @@ from pathlib import Path
 
 import duckdb
 
+from core.logger import get_logger
+
+_logger = get_logger("vigilant.database")
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-_DEFAULT_DB_PATH = Path(__file__).parent / "vigilant.db"
+_DEFAULT_DB_PATH = "core/database/vigilant.db"
 
 
 class Database:
@@ -34,7 +37,9 @@ class Database:
 
     def startup(self) -> None:
         """Open DuckDB file, load JSON extension, and apply schema DDL."""
+        os.makedirs("core/database/", exist_ok=True)
         self._conn = duckdb.connect(self._path)
+        _logger.info("Database directory verified and connection initialized.")
         try:
             self._conn.execute("LOAD json")
         except Exception:

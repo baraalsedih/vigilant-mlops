@@ -1,24 +1,36 @@
 from __future__ import annotations
 
-import logging
 import sys
+from pathlib import Path
+
+from loguru import logger
+
+_LOG_DIR = Path("core/logs")
+_LOG_FILE = _LOG_DIR / "backend.log"
+_FMT = "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {extra[module]} | {message}"
+
+_configured = False
 
 
-def _build_handler() -> logging.StreamHandler:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(name)s — %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+def _setup() -> None:
+    global _configured
+    if _configured:
+        return
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logger.configure(extra={"module": "vigilant"})
+    logger.remove()
+    logger.add(sys.stdout, format=_FMT, level="DEBUG", colorize=True)
+    logger.add(
+        str(_LOG_FILE),
+        format=_FMT,
+        level="DEBUG",
+        rotation="10 MB",
+        retention=10,
+        encoding="utf-8",
     )
-    return handler
+    _configured = True
 
 
-def get_logger(name: str = "vigilant") -> logging.Logger:
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        logger.addHandler(_build_handler())
-        logger.setLevel(logging.DEBUG)
-        logger.propagate = False
-    return logger
+def get_logger(name: str = "vigilant") -> logger.__class__:
+    _setup()
+    return logger.bind(module=name)

@@ -8,3 +8,5 @@
 **.db.wal
 **/notebooks/
 **/ml-serve/
+**.log
+core/logs/
