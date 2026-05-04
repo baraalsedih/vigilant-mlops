@@ -31,6 +31,18 @@ def _build_feature_stats(conn) -> list[str]:
     return lines, len(rows)
 
 
+def _to_json_str(value: object) -> str | None:
+    """Normalise a DuckDB JSON column value to a plain JSON string.
+
+    DuckDB may return JSON columns as a parsed Python dict/list (newer builds)
+    or as a raw JSON string (older builds).  Calling json.dumps() on a string
+    produces double-encoding; this helper handles both cases correctly.
+    """
+    if value is None:
+        return None
+    return value if isinstance(value, str) else json.dumps(value)
+
+
 def _build_reports(conn) -> list[str]:
     rows = conn.execute(
         "SELECT report_id, timestamp, report_type, model_version, metrics, artifacts"
@@ -38,8 +50,8 @@ def _build_reports(conn) -> list[str]:
     ).fetchall()
     lines = []
     for report_id, timestamp, report_type, model_version, metrics, artifacts in rows:
-        metrics_str = json.dumps(metrics) if metrics is not None else None
-        artifacts_str = json.dumps(artifacts) if artifacts is not None else None
+        metrics_str = _to_json_str(metrics)
+        artifacts_str = _to_json_str(artifacts)
         lines.append(
             f"INSERT OR REPLACE INTO reports"
             f" (report_id, timestamp, report_type, model_version, metrics, artifacts)"
@@ -68,8 +80,8 @@ def _build_reports_from_json(artifacts_dir: Path) -> tuple[list[str], int]:
         metrics = data.get("metrics")
         artifacts = data.get("artifacts")
 
-        metrics_str = json.dumps(metrics) if metrics is not None else None
-        artifacts_str = json.dumps(artifacts) if artifacts is not None else None
+        metrics_str = _to_json_str(metrics)
+        artifacts_str = _to_json_str(artifacts)
 
         lines.append(
             f"INSERT OR REPLACE INTO reports"
