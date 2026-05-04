@@ -1,0 +1,19 @@
+services:
+  backend:
+    build:
+      context: ./apps/backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/backend/core/database:/app/core/database
+      - ./apps/backend/core/logs:/app/core/logs
+    environment:
+      - ENV=production
+      - VIGILANT_DB_PATH=/app/core/database/vigilant.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
