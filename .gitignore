@@ -9,4 +9,4 @@
 **/notebooks/
 **/ml-serve/
 **.log
-**/logs/
+core/logs/
