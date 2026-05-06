@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useOutletContext } from 'react-router-dom';
+import { useFilters } from '../context/FiltersContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   RadarChart, PolarGrid, PolarAngleAxis, Radar,
@@ -76,7 +76,7 @@ function LoadingSkeleton() {
 }
 
 export default function Evaluation() {
-  const { modelVersion } = useOutletContext<{ timeWindow: string; modelVersion: string }>();
+  const { modelVersion } = useFilters();
 
   const { data: reports, isLoading, error } = useQuery({
     queryKey: ['reports'],

@@ -2,9 +2,9 @@ import { ChevronDown, Bell, Clock, Cpu, XCircle, AlertTriangle, CheckCircle2 } f
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchReportHistory, fetchIncidents } from '../api';
+import { useFilters, TIME_WINDOWS } from '../context/FiltersContext';
 import type { IncidentRecord } from '../api/types';
-
-const timeWindows = ['Last 1h', 'Last 6h', 'Last 24h', 'Last 7d', 'Last 30d'];
+import type { TimeWindow } from '../context/FiltersContext';
 
 function Dropdown({
   icon: Icon,
@@ -65,17 +65,9 @@ const severityIcon: Record<string, { Icon: React.ElementType; color: string; bg:
   INFO: { Icon: CheckCircle2, color: 'text-blue-400', bg: 'bg-blue-500/10' },
 };
 
-export default function Header({
-  timeWindow,
-  setTimeWindow,
-  modelVersion,
-  setModelVersion,
-}: {
-  timeWindow: string;
-  setTimeWindow: (v: string) => void;
-  modelVersion: string;
-  setModelVersion: (v: string) => void;
-}) {
+export default function Header() {
+  const { timeWindow, setTimeWindow, modelVersion, setModelVersion } = useFilters();
+
   const { data: reports } = useQuery({
     queryKey: ['reports'],
     queryFn: fetchReportHistory,
@@ -88,7 +80,6 @@ export default function Header({
     staleTime: 60_000,
   });
 
-  // Only show versions from actual model evaluation reports, not dataset labels
   const versions = [
     ...new Set(
       (reports ?? [])
@@ -98,7 +89,6 @@ export default function Header({
     ),
   ];
 
-  // Once real versions arrive, seed Shell state with the latest
   const versionsKey = versions.join(',');
   useEffect(() => {
     if (versions.length > 0 && !versions.includes(modelVersion)) {
@@ -134,9 +124,9 @@ export default function Header({
         <Dropdown
           icon={Clock}
           label="Window"
-          options={timeWindows}
+          options={[...TIME_WINDOWS]}
           value={timeWindow}
-          onChange={setTimeWindow}
+          onChange={(v) => setTimeWindow(v as TimeWindow)}
         />
         <Dropdown
           icon={Cpu}
@@ -146,7 +136,6 @@ export default function Header({
           onChange={setModelVersion}
         />
 
-        {/* Notification bell */}
         <div className="relative" ref={notifRef}>
           <button
             onClick={() => setNotifOpen((p) => !p)}

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { useOutletContext } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, XCircle, Clock, Loader2, RefreshCw } from 'lucide-react';
+import { useFilters } from '../context/FiltersContext';
 import StatCard from '../components/StatCard';
 import { fetchIncidents, fetchReportHistory } from '../api';
 import type { IncidentRecord } from '../api/types';
@@ -12,6 +12,15 @@ const timeWindowMs: Record<string, number> = {
   'Last 7d':  7 * 24 * 60 * 60 * 1000,
   'Last 30d': 30 * 24 * 60 * 60 * 1000,
 };
+
+// ISO timestamps from the backend can have microseconds (6 decimal places).
+// Standard JS Date only handles 3 (milliseconds), so we truncate before parsing.
+// Returns Infinity for null/unparseable so they always pass the >= cutoff check.
+function parseTs(iso: string | null | undefined): number {
+  if (!iso) return Infinity;
+  const ms = Date.parse(iso.replace(/(\.\d{3})\d+/, '$1'));
+  return Number.isNaN(ms) ? Infinity : ms;
+}
 
 const severityMap: Record<string, 'critical' | 'warning' | 'healthy'> = {
   CRITICAL: 'critical',
@@ -66,7 +75,7 @@ function LoadingRows() {
 }
 
 export default function Overview() {
-  const { timeWindow, modelVersion } = useOutletContext<{ timeWindow: string; modelVersion: string }>();
+  const { timeWindow, modelVersion } = useFilters();
 
   const {
     data: incidents,
@@ -80,10 +89,13 @@ export default function Overview() {
     isLoading: loadingReports,
   } = useQuery({ queryKey: ['reports'], queryFn: fetchReportHistory });
 
-  // Filter incidents by selected time window
-  const cutoff = Date.now() - (timeWindowMs[timeWindow] ?? Infinity);
+  // Filter incidents by selected time window.
+  // windowMs is always defined since timeWindow is constrained to known keys,
+  // but fall back to 30 days so unknown values never produce -Infinity cutoff.
+  const windowMs = timeWindowMs[timeWindow] ?? timeWindowMs['Last 30d'];
+  const cutoff = Date.now() - windowMs;
   const visibleIncidents = (incidents ?? []).filter(
-    (i) => new Date(i.timestamp).getTime() >= cutoff
+    (i) => parseTs(i.timestamp) >= cutoff
   );
 
   // Show metrics for the selected model version, falling back to latest PRE_PROD
