@@ -1,4 +1,4 @@
-import { ChevronDown, Bell, Clock, Cpu, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, Bell, Clock, Cpu, XCircle, AlertTriangle, CheckCircle2, Activity } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchReportHistory, fetchIncidents } from '../api';
@@ -135,6 +135,12 @@ export default function Header() {
           value={versions.includes(modelVersion) ? modelVersion : (versions[0] ?? 'loading…')}
           onChange={setModelVersion}
         />
+
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+          <Activity size={11} className="text-emerald-400" />
+          <span className="text-xs text-emerald-400 font-medium">Model Healthy</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        </div>
 
         <div className="relative" ref={notifRef}>
           <button

@@ -15,3 +15,6 @@ export const fetchDrift = (): Promise<DataDriftResult> =>
 
 export const fetchModelHealth = (): Promise<ModelHealthResponse> =>
   apiClient.get<ModelHealthResponse>('/api/v1/reporter/model-health').then((r) => r.data);
+
+export const fetchIncident = (id: string): Promise<IncidentRecord> =>
+  apiClient.get<IncidentRecord>(`/api/v1/incidents/${id}`).then((r) => r.data);

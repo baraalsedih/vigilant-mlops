@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, XCircle, Clock, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Clock, Loader2, RefreshCw, X, Hash, Tag, FileText, Calendar } from 'lucide-react';
 import { useFilters } from '../context/FiltersContext';
 import StatCard from '../components/StatCard';
 import { fetchIncidents, fetchReportHistory } from '../api';
@@ -74,8 +75,110 @@ function LoadingRows() {
   );
 }
 
+function IncidentDetail({ incident, onClose }: { incident: IncidentRecord; onClose: () => void }) {
+  const sev = severityMap[incident.severity] ?? 'healthy';
+  const cfg = severityConfig[sev];
+  const Icon = cfg.icon;
+  const psi = extractPsi(incident.description);
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="fixed right-0 top-0 h-full w-96 bg-gray-900 border-l border-gray-800 z-50 overflow-y-auto shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center justify-center w-8 h-8 rounded-lg border ${cfg.bg}`}>
+              <Icon size={14} className={cfg.color} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-100">Incident Detail</p>
+              <p className={`text-xs font-medium ${cfg.color}`}>{incident.severity}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 p-5 space-y-5">
+          {/* Status + Type row */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-gray-800/60 rounded-xl p-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Status</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cfg.bg} ${cfg.color}`}>
+                {incident.status}
+              </span>
+            </div>
+            <div className="bg-gray-800/60 rounded-xl p-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Type</p>
+              <p className="text-sm font-mono text-gray-300">{incident.incident_type}</p>
+            </div>
+          </div>
+
+          {/* Timestamp */}
+          <div className="bg-gray-800/60 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Calendar size={11} className="text-gray-500" />
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Timestamp</p>
+            </div>
+            <p className="text-sm text-gray-300 font-mono">
+              {new Date(incident.timestamp).toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-600 mt-0.5">{timeAgo(incident.timestamp)}</p>
+          </div>
+
+          {/* PSI if present */}
+          {psi != null && (
+            <div className="bg-gray-800/60 rounded-xl p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Tag size={11} className="text-gray-500" />
+                <p className="text-xs text-gray-500 uppercase tracking-wider">PSI Score</p>
+              </div>
+              <p className={`text-lg font-mono font-bold ${psi >= 0.2 ? 'text-red-400' : psi >= 0.1 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {psi.toFixed(4)}
+              </p>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {psi >= 0.2 ? 'Significant drift' : psi >= 0.1 ? 'Moderate drift' : 'Stable'}
+              </p>
+            </div>
+          )}
+
+          {/* Description */}
+          <div className="bg-gray-800/60 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText size={11} className="text-gray-500" />
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Description</p>
+            </div>
+            <p className="text-sm text-gray-300 leading-relaxed">
+              {incident.description ?? 'No description provided.'}
+            </p>
+          </div>
+
+          {/* Incident ID */}
+          <div className="bg-gray-800/60 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Hash size={11} className="text-gray-500" />
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Incident ID</p>
+            </div>
+            <p className="text-xs font-mono text-gray-500 break-all">{incident.incident_id}</p>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function Overview() {
   const { timeWindow, modelVersion } = useFilters();
+  const [selectedIncident, setSelectedIncident] = useState<IncidentRecord | null>(null);
 
   const {
     data: incidents,
@@ -111,6 +214,10 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
+      {selectedIncident && (
+        <IncidentDetail incident={selectedIncident} onClose={() => setSelectedIncident(null)} />
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-100">System Overview</h1>
@@ -218,7 +325,8 @@ export default function Overview() {
               return (
                 <div
                   key={alert.incident_id}
-                  className={`flex items-center gap-4 px-5 py-3.5 ${
+                  onClick={() => setSelectedIncident(alert)}
+                  className={`flex items-center gap-4 px-5 py-3.5 cursor-pointer ${
                     idx !== Math.min(visibleIncidents.length, 10) - 1 ? 'border-b border-gray-800/60' : ''
                   } hover:bg-gray-800/30 transition-colors`}
                 >
@@ -252,6 +360,7 @@ export default function Overview() {
             })
           )}
         </div>
+        <p className="text-xs text-gray-700 mt-2 text-right">Click any row for full details</p>
       </div>
     </div>
   );
