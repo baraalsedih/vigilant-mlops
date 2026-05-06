@@ -5,7 +5,7 @@ import Header from './Header';
 
 export default function Shell() {
   const [timeWindow, setTimeWindow] = useState('Last 24h');
-  const [modelVersion, setModelVersion] = useState('v3.2.1 (prod)');
+  const [modelVersion, setModelVersion] = useState('');
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
