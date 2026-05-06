@@ -1,63 +1,35 @@
 import { useState } from 'react';
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { fetchDrift } from '../api';
+import type { FeatureDriftResult, DriftStatus } from '../api/types';
 
-type Status = 'healthy' | 'warning' | 'critical';
-type SortKey = 'feature' | 'psi' | 'kl' | 'ks' | 'wasserstein' | 'samples' | 'status';
+type SortKey = 'feature' | 'statistic' | 'pvalue' | 'status';
 
-interface FeatureRow {
-  feature: string;
-  type: 'numeric' | 'categorical';
-  psi: number;
-  kl: number;
-  ks: number;
-  wasserstein: number;
-  samples: number;
-  status: Status;
-  trend: 'up' | 'down' | 'stable';
-}
-
-const rawFeatures: FeatureRow[] = [
-  { feature: 'age_bucket', type: 'categorical', psi: 0.34, kl: 0.28, ks: 0.21, wasserstein: 0.15, samples: 12847, status: 'critical', trend: 'up' },
-  { feature: 'income_normalized', type: 'numeric', psi: 0.18, kl: 0.14, ks: 0.12, wasserstein: 0.09, samples: 12847, status: 'warning', trend: 'up' },
-  { feature: 'credit_score', type: 'numeric', psi: 0.04, kl: 0.03, ks: 0.04, wasserstein: 0.02, samples: 12831, status: 'healthy', trend: 'stable' },
-  { feature: 'loan_amount', type: 'numeric', psi: 0.12, kl: 0.10, ks: 0.09, wasserstein: 0.07, samples: 12847, status: 'warning', trend: 'up' },
-  { feature: 'employment_type', type: 'categorical', psi: 0.41, kl: 0.35, ks: 0.29, wasserstein: 0.22, samples: 12847, status: 'critical', trend: 'up' },
-  { feature: 'debt_ratio', type: 'numeric', psi: 0.21, kl: 0.17, ks: 0.15, wasserstein: 0.11, samples: 12840, status: 'warning', trend: 'down' },
-  { feature: 'num_credit_lines', type: 'numeric', psi: 0.07, kl: 0.05, ks: 0.06, wasserstein: 0.04, samples: 12847, status: 'healthy', trend: 'stable' },
-  { feature: 'payment_history', type: 'numeric', psi: 0.03, kl: 0.02, ks: 0.03, wasserstein: 0.01, samples: 12844, status: 'healthy', trend: 'stable' },
-  { feature: 'collateral_value', type: 'numeric', psi: 0.09, kl: 0.08, ks: 0.07, wasserstein: 0.05, samples: 12847, status: 'healthy', trend: 'down' },
-  { feature: 'region_code', type: 'categorical', psi: 0.25, kl: 0.22, ks: 0.18, wasserstein: 0.14, samples: 12847, status: 'warning', trend: 'up' },
-  { feature: 'loan_purpose', type: 'categorical', psi: 0.06, kl: 0.05, ks: 0.04, wasserstein: 0.03, samples: 12847, status: 'healthy', trend: 'stable' },
-  { feature: 'account_age_months', type: 'numeric', psi: 0.02, kl: 0.01, ks: 0.02, wasserstein: 0.01, samples: 12839, status: 'healthy', trend: 'stable' },
-  { feature: 'last_delinquency_days', type: 'numeric', psi: 0.38, kl: 0.31, ks: 0.25, wasserstein: 0.19, samples: 12847, status: 'critical', trend: 'up' },
-  { feature: 'interest_rate', type: 'numeric', psi: 0.11, kl: 0.09, ks: 0.08, wasserstein: 0.06, samples: 12847, status: 'warning', trend: 'stable' },
-  { feature: 'bank_balance_log', type: 'numeric', psi: 0.05, kl: 0.04, ks: 0.03, wasserstein: 0.02, samples: 12847, status: 'healthy', trend: 'stable' },
-  { feature: 'zip_code_cluster', type: 'categorical', psi: 0.16, kl: 0.13, ks: 0.11, wasserstein: 0.08, samples: 12845, status: 'warning', trend: 'up' },
-];
-
-const statusConfig = {
-  healthy: { label: 'Healthy', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', dot: 'bg-emerald-400' },
+const statusConfig: Record<DriftStatus, { label: string; bg: string; text: string; border: string; dot: string }> = {
+  ok: { label: 'Stable', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', dot: 'bg-emerald-400' },
   warning: { label: 'Warning', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20', dot: 'bg-amber-400' },
   critical: { label: 'Critical', bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', dot: 'bg-red-400' },
 };
 
+const statusOrder: Record<DriftStatus, number> = { ok: 0, warning: 1, critical: 2 };
+
+function methodType(method: string) {
+  if (method.includes('chi2')) return 'categorical';
+  return 'numeric';
+}
+
 function PsiBar({ value }: { value: number }) {
   const pct = Math.min(value / 0.5, 1) * 100;
-  const color = value >= 0.3 ? '#f87171' : value >= 0.1 ? '#fbbf24' : '#34d399';
+  const color = value >= 0.2 ? '#f87171' : value >= 0.1 ? '#fbbf24' : '#34d399';
   return (
     <div className="flex items-center gap-2">
       <div className="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
-      <span className="font-mono text-xs text-gray-300 tabular-nums">{value.toFixed(3)}</span>
+      <span className="font-mono text-xs text-gray-300 tabular-nums">{value.toFixed(4)}</span>
     </div>
   );
-}
-
-function TrendIcon({ trend }: { trend: 'up' | 'down' | 'stable' }) {
-  if (trend === 'up') return <TrendingUp size={13} className="text-red-400" />;
-  if (trend === 'down') return <TrendingDown size={13} className="text-emerald-400" />;
-  return <Minus size={13} className="text-gray-600" />;
 }
 
 function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
@@ -67,69 +39,153 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 
 export default function FeatureDrift() {
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<Status | 'all'>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('psi');
+  const [filter, setFilter] = useState<DriftStatus | 'all'>('all');
+  const [sortKey, setSortKey] = useState<SortKey>('statistic');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const { data: drift, isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: ['drift'],
+    queryFn: fetchDrift,
+    staleTime: 5 * 60_000,
+  });
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortKey(key); setSortDir('desc'); }
   };
 
-  const filtered = rawFeatures
+  const features = drift?.features ?? [];
+
+  const filtered = features
     .filter((f) => f.feature.toLowerCase().includes(search.toLowerCase()))
     .filter((f) => filter === 'all' || f.status === filter)
     .sort((a, b) => {
-      const av = a[sortKey], bv = b[sortKey];
-      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number);
+      let cmp = 0;
+      if (sortKey === 'feature') cmp = a.feature.localeCompare(b.feature);
+      else if (sortKey === 'statistic') cmp = a.statistic - b.statistic;
+      else if (sortKey === 'pvalue') cmp = (a.pvalue ?? 1) - (b.pvalue ?? 1);
+      else if (sortKey === 'status') cmp = statusOrder[a.status] - statusOrder[b.status];
       return sortDir === 'asc' ? cmp : -cmp;
     });
 
-  const counts = { all: rawFeatures.length, critical: 0, warning: 0, healthy: 0 };
-  rawFeatures.forEach((f) => counts[f.status]++);
+  const counts = { all: features.length, ok: 0, warning: 0, critical: 0 };
+  features.forEach((f) => counts[f.status]++);
 
-  const headerCls = 'px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-300 transition-colors select-none';
+  const headerCls =
+    'px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-300 transition-colors select-none';
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-100">Feature Drift</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Running drift analysis against reference distribution…</p>
+        </div>
+        <div className="flex flex-col items-center justify-center py-24 gap-3">
+          <Loader2 size={32} className="animate-spin text-blue-400" />
+          <p className="text-sm text-gray-400">Computing PSI statistics — this may take a few seconds</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold text-gray-100">Feature Drift</h1>
+        <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+          <AlertCircle size={32} className="text-red-400" />
+          <p className="text-gray-300 font-medium">Drift analysis failed</p>
+          <p className="text-sm text-gray-500 max-w-sm">{(error as Error).message}</p>
+          <button
+            onClick={() => refetch()}
+            className="mt-2 flex items-center gap-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:border-gray-500 transition-colors"
+          >
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-100">Feature Drift</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Population Stability Index and distributional shift metrics</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-100">Feature Drift</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            PSI &amp; statistical tests vs. reference distribution
+            {drift && (
+              <span className="ml-2 text-xs text-gray-600">
+                · {drift.n_accumulated.toLocaleString()} records · drift rate{' '}
+                {(drift.drift_rate * 100).toFixed(1)}%
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-400 transition-colors disabled:opacity-40"
+        >
+          <RefreshCw size={11} className={isFetching ? 'animate-spin' : ''} /> refresh
+        </button>
       </div>
 
+      {/* Summary filter cards */}
       <div className="grid grid-cols-4 gap-4">
-        {(['all', 'critical', 'warning', 'healthy'] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`text-left px-4 py-3 rounded-xl border transition-all ${
-              filter === s
-                ? s === 'all'
-                  ? 'bg-blue-600/15 border-blue-600/30 text-blue-400'
-                  : `${statusConfig[s].bg} ${statusConfig[s].border} ${statusConfig[s].text}`
-                : 'bg-gray-900 border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300'
-            }`}
-          >
-            <p className="text-lg font-bold">{counts[s]}</p>
-            <p className="text-xs capitalize mt-0.5">{s === 'all' ? 'Total Features' : s}</p>
-          </button>
-        ))}
+        {(['all', 'critical', 'warning', 'ok'] as const).map((s) => {
+          const sc = s !== 'all' ? statusConfig[s] : null;
+          return (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`text-left px-4 py-3 rounded-xl border transition-all ${
+                filter === s
+                  ? s === 'all'
+                    ? 'bg-blue-600/15 border-blue-600/30 text-blue-400'
+                    : `${sc!.bg} ${sc!.border} ${sc!.text}`
+                  : 'bg-gray-900 border-gray-800 text-gray-500 hover:border-gray-700 hover:text-gray-300'
+              }`}
+            >
+              <p className="text-lg font-bold">{counts[s]}</p>
+              <p className="text-xs capitalize mt-0.5">
+                {s === 'all' ? 'Total Features' : s === 'ok' ? 'Stable' : s}
+              </p>
+            </button>
+          );
+        })}
       </div>
 
+      {/* Overall status banner */}
+      {drift && (
+        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border ${statusConfig[drift.overall_status].bg} ${statusConfig[drift.overall_status].border}`}>
+          <span className={`w-2 h-2 rounded-full ${statusConfig[drift.overall_status].dot}`} />
+          <span className={`text-sm font-medium ${statusConfig[drift.overall_status].text}`}>
+            Overall: {drift.overall_status.toUpperCase()}
+          </span>
+          <span className="text-xs text-gray-500 ml-auto">
+            {drift.n_drifted} of {drift.n_features_checked} features drifted
+          </span>
+        </div>
+      )}
+
+      {/* Search */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-xs">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
             type="text"
-            placeholder="Search features..."
+            placeholder="Search features…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
           />
         </div>
-        <span className="text-xs text-gray-600">{filtered.length} of {rawFeatures.length} features</span>
+        <span className="text-xs text-gray-600">{filtered.length} of {features.length} features</span>
       </div>
 
+      {/* Table */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -139,61 +195,58 @@ export default function FeatureDrift() {
                   <span className="flex items-center gap-1.5">Feature <SortIcon active={sortKey === 'feature'} dir={sortDir} /></span>
                 </th>
                 <th className={`${headerCls} hidden md:table-cell`}>Type</th>
-                <th className={headerCls} onClick={() => toggleSort('psi')}>
-                  <span className="flex items-center gap-1.5">PSI Score <SortIcon active={sortKey === 'psi'} dir={sortDir} /></span>
+                <th className={headerCls} onClick={() => toggleSort('statistic')}>
+                  <span className="flex items-center gap-1.5">PSI Score <SortIcon active={sortKey === 'statistic'} dir={sortDir} /></span>
                 </th>
-                <th className={`${headerCls} hidden lg:table-cell`} onClick={() => toggleSort('kl')}>
-                  <span className="flex items-center gap-1.5">KL Div <SortIcon active={sortKey === 'kl'} dir={sortDir} /></span>
+                <th className={`${headerCls} hidden lg:table-cell`} onClick={() => toggleSort('pvalue')}>
+                  <span className="flex items-center gap-1.5">p-value <SortIcon active={sortKey === 'pvalue'} dir={sortDir} /></span>
                 </th>
-                <th className={`${headerCls} hidden lg:table-cell`} onClick={() => toggleSort('ks')}>
-                  <span className="flex items-center gap-1.5">KS Stat <SortIcon active={sortKey === 'ks'} dir={sortDir} /></span>
-                </th>
-                <th className={`${headerCls} hidden xl:table-cell`} onClick={() => toggleSort('samples')}>
-                  <span className="flex items-center gap-1.5">Samples <SortIcon active={sortKey === 'samples'} dir={sortDir} /></span>
-                </th>
+                <th className={`${headerCls} hidden md:table-cell`}>Method</th>
                 <th className={headerCls} onClick={() => toggleSort('status')}>
                   <span className="flex items-center gap-1.5">Status <SortIcon active={sortKey === 'status'} dir={sortDir} /></span>
                 </th>
-                <th className={`${headerCls} hidden md:table-cell`}>Trend</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/60">
-              {filtered.map((row) => {
+              {filtered.map((row: FeatureDriftResult) => {
                 const sc = statusConfig[row.status];
+                const type = methodType(row.method);
                 return (
                   <tr key={row.feature} className="hover:bg-gray-800/30 transition-colors group">
                     <td className="px-4 py-3">
-                      <span className="text-sm font-mono text-gray-200 group-hover:text-white transition-colors">{row.feature}</span>
+                      <span className="text-sm font-mono text-gray-200 group-hover:text-white transition-colors">
+                        {row.feature}
+                      </span>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <span className={`text-xs px-2 py-0.5 rounded border font-medium ${
-                        row.type === 'numeric'
+                        type === 'numeric'
                           ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
                           : 'text-violet-400 bg-violet-500/10 border-violet-500/20'
                       }`}>
-                        {row.type}
+                        {type}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <PsiBar value={row.psi} />
+                      <PsiBar value={row.statistic} />
                     </td>
                     <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="font-mono text-xs text-gray-400 tabular-nums">{row.kl.toFixed(3)}</span>
+                      {row.pvalue != null ? (
+                        <span className={`font-mono text-xs tabular-nums ${row.pvalue < 0.05 ? 'text-red-400' : 'text-gray-400'}`}>
+                          {row.pvalue < 0.0001 ? '< 0.0001' : row.pvalue.toFixed(4)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-600 text-xs">—</span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="font-mono text-xs text-gray-400 tabular-nums">{row.ks.toFixed(3)}</span>
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell">
-                      <span className="font-mono text-xs text-gray-400 tabular-nums">{row.samples.toLocaleString()}</span>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      <span className="font-mono text-xs text-gray-600">{row.method}</span>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border font-medium ${sc.bg} ${sc.text} ${sc.border}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
                         {sc.label}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      <TrendIcon trend={row.trend} />
                     </td>
                   </tr>
                 );
@@ -208,8 +261,9 @@ export default function FeatureDrift() {
 
       <div className="flex items-center gap-6 text-xs text-gray-600">
         <span><span className="text-emerald-500 font-semibold">Green</span> = PSI &lt; 0.10 (stable)</span>
-        <span><span className="text-amber-500 font-semibold">Yellow</span> = 0.10 ≤ PSI &lt; 0.30 (moderate drift)</span>
-        <span><span className="text-red-500 font-semibold">Red</span> = PSI ≥ 0.30 (significant drift)</span>
+        <span><span className="text-amber-500 font-semibold">Yellow</span> = 0.10 ≤ PSI &lt; 0.20 (moderate drift)</span>
+        <span><span className="text-red-500 font-semibold">Red</span> = PSI ≥ 0.20 (significant drift)</span>
+        <span className="text-gray-700">p-value &lt; 0.05 = statistically significant</span>
       </div>
     </div>
   );

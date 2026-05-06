@@ -50,7 +50,7 @@ export default function Sparkline({ data, label, currentValue, unit = '', status
                 fontSize: '11px',
                 color: '#e5e7eb',
               }}
-              formatter={(v: number) => [`${v}${unit}`, label]}
+              formatter={(v) => [`${v}${unit}`, label]}
             />
             <Area
               type="monotone"
