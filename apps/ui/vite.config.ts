@@ -7,4 +7,12 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://vigilant-mlops.onrender.com',
+        changeOrigin: true,
+      },
+    },
+  },
 });
