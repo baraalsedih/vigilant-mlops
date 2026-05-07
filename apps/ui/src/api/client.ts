@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const apiClient = axios.create({
-  baseURL: 'https://vigilant-mlops.onrender.com',
+  baseURL: '',
   headers: { 'Content-Type': 'application/json' },
   timeout: 60000,
 });
