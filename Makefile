@@ -30,3 +30,6 @@ init-baseline: ## Compute feature baselines from a training file. Usage: make in
 
 test: ## Run backend unit and integration tests
 	cd apps/backend && poetry install --with dev --quiet && poetry run pytest
+
+dev-frontend: ## Start the React frontend with hot reload
+	cd apps/ui && npm install --silent && npm run dev
