@@ -2,68 +2,30 @@
 
 **A production-grade platform for monitoring ML incidents, drift, and performance.**
 
-VigilantMLOps gives ML teams a real-time observability layer over binary classification models — surfacing data drift, concept drift, and performance decay before they become production incidents. Built around a Network Intrusion / Malicious URL detection use case, but designed to be model-agnostic.
+VigilantMLOps gives ML teams a real-time observability layer over deployed models — surfacing data drift, concept drift, and performance decay before they become production incidents. Built around a Network Intrusion / Malicious URL detection use case, but designed to be model-agnostic.
+
+🔗 Live here: https://vigilant-mlops-ui.onrender.com
+
+
+Tech: Python · FastAPI · DuckDB · Polars · Evidently · ReactJS · TypeScript · Docker · Poetry
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    DS[("Public Dataset\n / Malicious Websites")]
+<img width="1408" height="768" alt="system-design" src="https://github.com/user-attachments/assets/ed8aac7a-bd72-4314-83af-4c190a6adfde" />
 
-    subgraph API["API Layer  ·  FastAPI"]
-        direction TB
-        INGEST["Ingestion Endpoint\nPOST /api/v1/monitoring"]
-        GATE["ML Engine\nSchema Validator"]
-        INGEST --> GATE
-    end
+</br>
 
-    subgraph CORE["Monitoring Core"]
-        DRIFT["Drift Service\nPSI / KS-test / JS Divergence"]
-        PERF["Performance Service\nAccuracy / F1 / Confusion Matrix"]
-        HEALTH["System Middleware\nLatency and Health Probes"]
-    end
+<img width="1512" height="829" alt="Screenshot 2026-05-07 at 4 44 08 PM" src="https://github.com/user-attachments/assets/814c3748-6a9d-4cad-8a9e-2e4e9787cc33" />
 
-    subgraph ACTION["Action Engine"]
-        direction TB
-        ALERT["Alert Manager\nYAML Threshold Config"]
-        DISPATCH["Incident Dispatcher"]
-        LOW["Auto-Resolve\nLow Risk\nsystem_latency · schema_skew"]
-        HIGH["Manual Ticket\nHigh Risk\ndata_drift · performance_drop"]
-        ALERT --> DISPATCH
-        DISPATCH -->|"severity = low"| LOW
-        DISPATCH -->|"severity = high"| HIGH
-    end
 
-    subgraph PERSIST["Persistence  ·  DuckDB"]
-        LOGS[("prediction_logs")]
-        INC[("incidents")]
-        EVALS[("evaluation_reports")]
-    end
 
-    DS -->|"ETL"| INGEST
+</br>
 
-    GATE -->|"Valid Payload"| DRIFT
-    GATE -->|"Valid Payload"| PERF
-    GATE -->|"System Metrics"| HEALTH
-    GATE -->|"Schema Violation"| ALERT
+<img width="1512" height="827" alt="Screenshot 2026-05-07 at 4 44 49 PM" src="https://github.com/user-attachments/assets/ebb6a6e3-e527-4d21-8f61-50756f515665" />
 
-    DRIFT -->|"Drift Score"| ALERT
-    PERF -->|"Metric Decay"| ALERT
-    HEALTH -->|"Latency Spike"| ALERT
-
-    DRIFT --> LOGS
-    PERF --> EVALS
-    HEALTH --> LOGS
-
-    LOW --> INC
-    HIGH --> INC
-
-    LOGS -->|"REST / JSON"| UI_MON["Monitoring Dashboard"]
-    INC -->|"REST / JSON"| UI_INC["Incidents Dashboard"]
-    EVALS -->|"REST / JSON"| UI_REP["Reporter Dashboard"]
-```
+</br>
 
 ### Key API Routes
 
